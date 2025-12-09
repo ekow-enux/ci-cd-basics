@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import  { useState, useEffect } from 'react';
 
 function App() {
-  const [isPlaying, setIsPlaying] = useState(false);
+
   const [activeSection, setActiveSection] = useState('hero');
 
   // Smooth scroll to section
