@@ -88,16 +88,8 @@ jobs:
           git pull origin main || echo "No changes to pull"
 
           # ===== BUILD VITE =====
-          if [ ! -d "ci-cd-basics" ]; then
-            echo "Error: ci-cd-basics directory not found!"
-            ls -la
-            exit 1
-          fi
-          
-          cd ci-cd-basics || {
-            echo "Failed to enter ci-cd-basics directory"
-            exit 1
-          }
+          # Build from current directory since project files are in the root
+          echo "Building from current directory: $(pwd)"
           
           echo "Installing dependencies..."
           npm ci || {
@@ -126,6 +118,7 @@ jobs:
           fi
 
           # ===== SERVE WITH PM2 =====
+          echo "Current directory: $(pwd)"
           echo "Checking PM2 status..."
           pm2 status || echo "PM2 not running or no processes found"
           
@@ -134,10 +127,13 @@ jobs:
           pm2 delete ${{ secrets.PM2_NAME }} || echo "No process to delete"
           
           echo "Starting PM2 serve..."
-          cd ci-cd-basics || {
-            echo "Failed to enter ci-cd-basics directory"
+          # Build files are in the current directory from the build process
+          if [ ! -d "dist" ]; then
+            echo "Error: dist directory not found in current directory"
+            echo "Current directory contents:"
+            ls -la
             exit 1
-          }
+          fi
           
           pm2 serve dist ${{ secrets.PM2_PORT }} --name ${{ secrets.PM2_NAME }} --spa || {
             echo "Failed to start PM2 serve"
