@@ -6,21 +6,16 @@ on:
       - main
 
 jobs:
-  # =========================
-  # ✅ CI: BUILD STAGE
-  # =========================
-  build:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: ci-cd-basics/package-lock.json
+          node-version: '20'
 
       - name: Install Dependencies
         working-directory: ci-cd-basics
@@ -34,28 +29,7 @@ jobs:
         working-directory: ci-cd-basics
         run: |
           ls -la dist/
-          test -f dist/index.html
-
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: vite-dist
-          path: ci-cd-basics/dist
-
-
-  # =========================
-  # ✅ CD: DEPLOY STAGE
-  # =========================
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download Build Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: vite-dist
-          path: dist
+          test -f dist/index.html || (echo "Build failed: index.html not found" && exit 1)
 
       - name: Setup SSH
         run: |
@@ -64,34 +38,52 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Copy Build to Server
+      - name: Load GitHub Secrets
         run: |
-          rsync -avz dist/ \
-          ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/voiceover-landing/
+          echo "DOMAIN=${{ secrets.DOMAIN }}" >> $GITHUB_ENV
+          echo "PM2_PORT=${{ secrets.PM2_PORT }}" >> $GITHUB_ENV
+          echo "PM2_NAME=${{ secrets.PM2_NAME }}" >> $GITHUB_ENV
+          echo "EC2_USER=${{ secrets.EC2_USER }}" >> $GITHUB_ENV
+          echo "EC2_HOST=${{ secrets.EC2_HOST }}" >> $GITHUB_ENV
+          echo "EMAIL=${{ secrets.EMAIL }}" >> $GITHUB_ENV
+          echo "APP_DIR=voiceover-landing" >> $GITHUB_ENV
 
-      - name: Configure PM2, Nginx & SSL
+      - name: Full Frontend Server Setup & Deploy
         run: |
-          ssh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} <<EOF
+          ssh $EC2_USER@$EC2_HOST <<EOF
+          set -e
 
-          APP_DIR=/home/${{ secrets.EC2_USER }}/voiceover-landing
-          PM2_NAME=${{ secrets.PM2_NAME }}
-          PM2_PORT=${{ secrets.PM2_PORT }}
-          DOMAIN=${{ secrets.DOMAIN }}
-          EMAIL=${{ secrets.EMAIL }}
+          export DOMAIN="$DOMAIN"
+          export PM2_PORT="$PM2_PORT"
+          export PM2_NAME="$PM2_NAME"
+          export EMAIL="$EMAIL"
+          export APP_DIR="$APP_DIR"
 
-          # ===== CORE TOOLS =====
           sudo apt update -y
-          sudo apt install -y nginx curl certbot python3-certbot-nginx nodejs
+          sudo apt install -y git nginx curl certbot python3-certbot-nginx
 
-          # ===== PM2 =====
+          curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+          sudo apt install -y nodejs
           sudo npm install -g pm2
-          pm2 startup systemd -u ${{ secrets.EC2_USER }} --hp /home/${{ secrets.EC2_USER }} || true
 
+          pm2 startup systemd -u $EC2_USER --hp /home/$EC2_USER || true
+
+          if [ ! -d "\$APP_DIR" ]; then
+            git clone https://github.com/${{ github.repository }}.git \$APP_DIR
+          fi
+
+          cd \$APP_DIR
+          git pull origin main
+
+          cd ci-cd-basics
+          npm ci
+          npm run build
+
+          pm2 stop \$PM2_NAME || true
           pm2 delete \$PM2_NAME || true
-          pm2 serve \$APP_DIR \$PM2_PORT --name \$PM2_NAME --spa
+          pm2 serve dist \$PM2_PORT --name \$PM2_NAME --spa
           pm2 save
 
-          # ===== NGINX =====
           sudo tee /etc/nginx/sites-available/voiceover > /dev/null <<EOT
           server {
               listen 80;
@@ -101,8 +93,11 @@ jobs:
                   proxy_pass http://localhost:\$PM2_PORT;
                   proxy_http_version 1.1;
                   proxy_set_header Upgrade \$http_upgrade;
-                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Connection "upgrade";
                   proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
               }
           }
           EOT
@@ -111,8 +106,6 @@ jobs:
           sudo nginx -t
           sudo systemctl reload nginx
 
-          # ===== SSL =====
-          sudo certbot --nginx -d \$DOMAIN \
-            --non-interactive --agree-tos -m \$EMAIL
+          sudo certbot --nginx -d \$DOMAIN --non-interactive --agree-tos -m \$EMAIL || true
 
           EOF
