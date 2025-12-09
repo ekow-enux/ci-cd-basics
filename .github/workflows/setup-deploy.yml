@@ -60,7 +60,15 @@ jobs:
 
           # ===== PM2 =====
           sudo npm install -g pm2
-          pm2 startup systemd -u ${{ secrets.EC2_USER }} --hp /home/${{ secrets.EC2_USER }}
+          
+          echo "Verifying PM2 installation..."
+          pm2 --version || {
+            echo "PM2 installation failed"
+            exit 1
+          }
+          
+          echo "Setting up PM2 startup..."
+          pm2 startup systemd -u ${{ secrets.EC2_USER }} --hp /home/${{ secrets.EC2_USER }} || echo "PM2 startup setup failed, continuing..."
 
           # ===== CLONE SAME REPO =====
           if [ ! -d "\$APP_DIR" ]; then
@@ -118,9 +126,32 @@ jobs:
           fi
 
           # ===== SERVE WITH PM2 =====
-          pm2 delete ${{ secrets.PM2_NAME }} || true
-          pm2 serve ci-cd-basics/dist ${{ secrets.PM2_PORT }} --name ${{ secrets.PM2_NAME }} --spa
+          echo "Checking PM2 status..."
+          pm2 status || echo "PM2 not running or no processes found"
+          
+          echo "Stopping any existing process with name: ${{ secrets.PM2_NAME }}"
+          pm2 stop ${{ secrets.PM2_NAME }} || echo "No process to stop"
+          pm2 delete ${{ secrets.PM2_NAME }} || echo "No process to delete"
+          
+          echo "Starting PM2 serve..."
+          cd ci-cd-basics || {
+            echo "Failed to enter ci-cd-basics directory"
+            exit 1
+          }
+          
+          pm2 serve dist ${{ secrets.PM2_PORT }} --name ${{ secrets.PM2_NAME }} --spa || {
+            echo "Failed to start PM2 serve"
+            exit 1
+          }
+          
+          pm2 status
           pm2 save
+          
+          echo "PM2 process info:"
+          pm2 info ${{ secrets.PM2_NAME }} || echo "Could not get PM2 info"
+          
+          echo "PM2 logs:"
+          pm2 logs ${{ secrets.PM2_NAME }} --lines 10 --nostream || echo "Could not get PM2 logs"
 
           # ===== NGINX CONFIG =====
           sudo tee /etc/nginx/sites-available/voiceover > /dev/null <<EOT

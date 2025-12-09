@@ -146,6 +146,26 @@ If the build step fails:
 2. Verify the `ci-cd-basics` directory exists in your repository
 3. Ensure TypeScript compilation passes locally
 
+#### PM2 Process Management Issues
+If you encounter PM2 errors like "Process or Namespace Over not found":
+1. Verify `PM2_NAME` secret is properly set
+2. Check that the build directory `dist` exists in `ci-cd-basics/`
+3. Ensure PM2 is properly installed: `sudo npm install -g pm2`
+4. Check PM2 status on the server: `pm2 status`
+5. View PM2 logs: `pm2 logs your-app-name`
+
+#### PM2 Serve Issues
+If the `pm2 serve` command fails:
+1. Ensure you're in the correct directory: `cd ci-cd-basics`
+2. Verify the port is not already in use
+3. Check that the `dist` directory exists and contains `index.html`
+4. Try stopping and deleting the process manually:
+   ```bash
+   pm2 stop your-app-name
+   pm2 delete your-app-name
+   pm2 serve dist 3000 --name your-app-name --spa
+   ```
+
 #### SSL Certificate Issues
 If SSL setup fails:
 1. Verify your domain's DNS points to the EC2 server
