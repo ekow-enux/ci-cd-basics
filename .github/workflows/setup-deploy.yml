@@ -48,66 +48,20 @@ jobs:
           echo "EMAIL=${{ secrets.EMAIL }}" >> $GITHUB_ENV
           echo "APP_DIR=voiceover-landing" >> $GITHUB_ENV
 
-      - name: Full Frontend Server Setup & Deploy
+      - name: Upload Deployment Script to Server
         run: |
-          ssh $EC2_USER@$EC2_HOST <<EOF
-          set -e
+          scp deploy-server-setup.sh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/
 
-          DOMAIN="$DOMAIN"
-          PM2_PORT="$PM2_PORT"
-          PM2_NAME="$PM2_NAME"
-          EMAIL="$EMAIL"
-          APP_DIR="$APP_DIR"
-
-          sudo apt update -y
-          sudo apt install -y git nginx curl certbot python3-certbot-nginx
-
-          curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-          sudo apt install -y nodejs
-          sudo npm install -g pm2
-
-          pm2 startup systemd -u $EC2_USER --hp /home/$EC2_USER || true
-
-          if [ ! -d "$APP_DIR" ]; then
-            git clone https://github.com/${{ github.repository }}.git "$APP_DIR"
-          fi
-
-          cd "$APP_DIR"
-          git pull origin main
-
-          cd ci-cd-basics
-          npm ci
-          npm run build
-
-          pm2 stop "$PM2_NAME" || true
-          pm2 delete "$PM2_NAME" || true
-          pm2 serve dist "$PM2_PORT" --name "$PM2_NAME" --spa
-          pm2 save
-
-          # ✅ BULLETPROOF NGINX CONFIG (NO HEREDOC EXPANSION)
-          sudo rm -f /etc/nginx/sites-enabled/voiceover
-          sudo rm -f /etc/nginx/sites-available/voiceover
-
-          sudo bash -c "cat > /etc/nginx/sites-available/voiceover" <<NGINX
-          server {
-              listen 80;
-              server_name $DOMAIN;
-
-              location / {
-                  proxy_pass http://localhost:$PM2_PORT;
-                  proxy_set_header Host \$host;
-                  proxy_set_header X-Real-IP \$remote_addr;
-              }
-          }
-          NGINX
-
-                              sudo ln -sf /etc/nginx/sites-available/voiceover /etc/nginx/sites-enabled/
-
-                              sudo nginx -t
-                              sudo systemctl reload nginx
-
-                              sudo certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$EMAIL" || true
-
-                              echo "✅ DEPLOYMENT COMPLETE SUCCESSFULLY ✅"
-                              EOF
-            
+      - name: Execute Deployment on Server
+        run: |
+          ssh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} <<EOF
+          chmod +x /tmp/deploy-server-setup.sh
+          export DOMAIN="${{ secrets.DOMAIN }}"
+          export PM2_PORT="${{ secrets.PM2_PORT }}"
+          export PM2_NAME="${{ secrets.PM2_NAME }}"
+          export EC2_USER="${{ secrets.EC2_USER }}"
+          export EMAIL="${{ secrets.EMAIL }}"
+          export APP_DIR="voiceover-landing"
+          
+          /tmp/deploy-server-setup.sh
+          EOF
