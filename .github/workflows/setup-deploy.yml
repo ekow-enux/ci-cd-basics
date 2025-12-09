@@ -103,6 +103,20 @@ jobs:
             exit 1
           }
 
+          # ===== VALIDATE SECRETS =====
+          if [ -z "${{ secrets.DOMAIN }}" ]; then
+            echo "Error: DOMAIN secret is not set!"
+            exit 1
+          fi
+          if [ -z "${{ secrets.PM2_PORT }}" ]; then
+            echo "Error: PM2_PORT secret is not set!"
+            exit 1
+          fi
+          if [ -z "${{ secrets.PM2_NAME }}" ]; then
+            echo "Error: PM2_NAME secret is not set!"
+            exit 1
+          fi
+
           # ===== SERVE WITH PM2 =====
           pm2 delete ${{ secrets.PM2_NAME }} || true
           pm2 serve ci-cd-basics/dist ${{ secrets.PM2_PORT }} --name ${{ secrets.PM2_NAME }} --spa
@@ -120,6 +134,9 @@ jobs:
                   proxy_set_header Upgrade \$http_upgrade;
                   proxy_set_header Connection "upgrade";
                   proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
               }
           }
           EOT
@@ -129,6 +146,10 @@ jobs:
           echo "Testing nginx configuration..."
           sudo nginx -t || {
             echo "Nginx configuration test failed!"
+            echo "Current nginx configuration:"
+            sudo cat /etc/nginx/sites-available/voiceover
+            echo "Nginx error log:"
+            sudo tail -20 /var/log/nginx/error.log
             exit 1
           }
           

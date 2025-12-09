@@ -119,6 +119,44 @@ Configure these secrets in your GitHub repository:
 
 For questions about this project or deployment setup, please reach out through the contact form on the landing page.
 
+## 🔧 Troubleshooting
+
+### Common Deployment Issues
+
+#### Nginx Configuration Error
+If you encounter this error:
+```
+[emerg] invalid number of arguments in "proxy_set_header" directive in /etc/nginx/sites-enabled/voiceover:8
+```
+
+**Solution**: Ensure all required GitHub secrets are properly configured:
+- `DOMAIN` - Must be set to your domain name
+- `PM2_PORT` - Must be set to a valid port number
+- `PM2_NAME` - Must be set to a process name
+
+#### SSH Connection Issues
+If deployment fails during SSH connection:
+1. Verify `EC2_HOST` secret is correct
+2. Check `EC2_USER` is the correct username
+3. Ensure `EC2_KEY` contains the full private key
+
+#### Build Failures
+If the build step fails:
+1. Check that Node.js dependencies install correctly
+2. Verify the `ci-cd-basics` directory exists in your repository
+3. Ensure TypeScript compilation passes locally
+
+#### SSL Certificate Issues
+If SSL setup fails:
+1. Verify your domain's DNS points to the EC2 server
+2. Check that port 80 and 443 are open in your security group
+3. Ensure the `EMAIL` secret is a valid email address
+
+### Debugging Tips
+- Check the GitHub Actions logs for detailed error messages
+- The workflow now includes better error diagnostics
+- Nginx configuration is validated before deployment
+
 ## 📄 License
 
 This project is created for demonstration purposes. Feel free to use and modify as needed.
