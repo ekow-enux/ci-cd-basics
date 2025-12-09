@@ -88,8 +88,13 @@ jobs:
           git pull origin main || echo "No changes to pull"
 
           # ===== BUILD VITE =====
-          # Build from current directory since project files are in the root
-          echo "Building from current directory: $(pwd)"
+          # Project files are in the ci-cd-basics subdirectory
+          echo "Building from project directory: $(pwd)/ci-cd-basics"
+          
+          cd ci-cd-basics || {
+            echo "Failed to enter ci-cd-basics directory"
+            exit 1
+          }
           
           echo "Installing dependencies..."
           npm ci || {
@@ -127,9 +132,9 @@ jobs:
           pm2 delete ${{ secrets.PM2_NAME }} || echo "No process to delete"
           
           echo "Starting PM2 serve..."
-          # Build files are in the current directory from the build process
+          # Build files are in the ci-cd-basics/dist directory
           if [ ! -d "dist" ]; then
-            echo "Error: dist directory not found in current directory"
+            echo "Error: dist directory not found in ci-cd-basics directory"
             echo "Current directory contents:"
             ls -la
             exit 1
