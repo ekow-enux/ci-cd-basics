@@ -64,16 +64,44 @@ jobs:
 
           # ===== CLONE SAME REPO =====
           if [ ! -d "\$APP_DIR" ]; then
-            git clone git@github.com:${{ github.repository }} \$APP_DIR
+            echo "Cloning repository..."
+            git clone https://github.com/${{ github.repository }}.git \$APP_DIR || {
+              echo "Failed to clone repository. Check SSH keys and repository access."
+              exit 1
+            }
           fi
 
-          cd \$APP_DIR
-          git pull origin main
+          cd \$APP_DIR || {
+            echo "Failed to enter app directory"
+            exit 1
+          }
+          
+          echo "Pulling latest changes..."
+          git pull origin main || echo "No changes to pull"
 
           # ===== BUILD VITE =====
-          cd ci-cd-basics
-          npm install
-          npm run build
+          if [ ! -d "ci-cd-basics" ]; then
+            echo "Error: ci-cd-basics directory not found!"
+            ls -la
+            exit 1
+          fi
+          
+          cd ci-cd-basics || {
+            echo "Failed to enter ci-cd-basics directory"
+            exit 1
+          }
+          
+          echo "Installing dependencies..."
+          npm ci || {
+            echo "Failed to install dependencies"
+            exit 1
+          }
+          
+          echo "Building application..."
+          npm run build || {
+            echo "Failed to build application"
+            exit 1
+          }
 
           # ===== SERVE WITH PM2 =====
           pm2 delete ${{ secrets.PM2_NAME }} || true
@@ -90,18 +118,31 @@ jobs:
                   proxy_pass http://localhost:${{ secrets.PM2_PORT }};
                   proxy_http_version 1.1;
                   proxy_set_header Upgrade \$http_upgrade;
-                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Connection "upgrade";
                   proxy_set_header Host \$host;
               }
           }
           EOT
 
           sudo ln -sf /etc/nginx/sites-available/voiceover /etc/nginx/sites-enabled/
-          sudo nginx -t
-          sudo systemctl reload nginx
+          
+          echo "Testing nginx configuration..."
+          sudo nginx -t || {
+            echo "Nginx configuration test failed!"
+            exit 1
+          }
+          
+          echo "Reloading nginx..."
+          sudo systemctl reload nginx || {
+            echo "Failed to reload nginx"
+            exit 1
+          }
 
           # ===== SSL =====
+          echo "Setting up SSL with Let's Encrypt..."
           sudo certbot --nginx -d ${{ secrets.DOMAIN }} \
-            --non-interactive --agree-tos -m ${{ secrets.EMAIL }}
+            --non-interactive --agree-tos -m ${{ secrets.EMAIL }} || {
+            echo "SSL setup failed, but continuing..."
+          }
 
           EOF
