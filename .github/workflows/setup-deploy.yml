@@ -23,13 +23,18 @@ jobs:
           cache: 'npm'
 
       - name: Install Dependencies
-        run: npm ci
+        run: |
+          cd ci-cd-basics
+          npm ci
 
       - name: Build Application
-        run: npm run build
+        run: |
+          cd ci-cd-basics
+          npm run build
 
       - name: Verify Build Output
         run: |
+          cd ci-cd-basics
           ls -la dist/
           test -f dist/index.html || (echo "Build failed: index.html not found" && exit 1)
 
@@ -69,12 +74,13 @@ jobs:
           git pull origin main
 
           # ===== BUILD VITE =====
+          cd ci-cd-basics
           npm install
           npm run build
 
           # ===== SERVE WITH PM2 =====
           pm2 delete ${{ secrets.PM2_NAME }} || true
-          pm2 serve dist ${{ secrets.PM2_PORT }} --name ${{ secrets.PM2_NAME }} --spa
+          pm2 serve ci-cd-basics/dist ${{ secrets.PM2_PORT }} --name ${{ secrets.PM2_NAME }} --spa
           pm2 save
 
           # ===== NGINX CONFIG =====
