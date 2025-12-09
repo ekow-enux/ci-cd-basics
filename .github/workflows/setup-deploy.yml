@@ -42,11 +42,48 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
+      - name: Load GitHub Secrets as Environment Variables
+        run: |
+          echo "Loading GitHub secrets into environment variables..."
+          export DOMAIN="${{ secrets.DOMAIN }}"
+          export PM2_PORT="${{ secrets.PM2_PORT }}"
+          export PM2_NAME="${{ secrets.PM2_NAME }}"
+          export EC2_USER="${{ secrets.EC2_USER }}"
+          export EC2_HOST="${{ secrets.EC2_HOST }}"
+          export EMAIL="${{ secrets.EMAIL }}"
+          export APP_DIR="voiceover-landing"
+          
+          echo "Environment variables loaded:"
+          echo "DOMAIN: $DOMAIN"
+          echo "PM2_PORT: $PM2_PORT"
+          echo "PM2_NAME: $PM2_NAME"
+          echo "EC2_USER: $EC2_USER"
+          echo "EC2_HOST: $EC2_HOST"
+          echo "EMAIL: $EMAIL"
+          
+          # Save to file for use in subsequent steps
+          echo "DOMAIN=$DOMAIN" >> $GITHUB_ENV
+          echo "PM2_PORT=$PM2_PORT" >> $GITHUB_ENV
+          echo "PM2_NAME=$PM2_NAME" >> $GITHUB_ENV
+          echo "EC2_USER=$EC2_USER" >> $GITHUB_ENV
+          echo "EC2_HOST=$EC2_HOST" >> $GITHUB_ENV
+          echo "EMAIL=$EMAIL" >> $GITHUB_ENV
+          echo "APP_DIR=$APP_DIR" >> $GITHUB_ENV
+
       - name: Full Frontend Server Setup & Deploy
         run: |
-          ssh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} <<EOF
+          ssh $EC2_USER@$EC2_HOST <<EOF
 
-          APP_DIR=voiceover-landing
+          # Set environment variables in remote session
+          export DOMAIN="$DOMAIN"
+          export PM2_PORT="$PM2_PORT"
+          export PM2_NAME="$PM2_NAME"
+          export EC2_USER="$EC2_USER"
+          export EC2_HOST="$EC2_HOST"
+          export EMAIL="$EMAIL"
+          export APP_DIR="voiceover-landing"
+
+          APP_DIR="voiceover-landing"
 
           # ===== SYSTEM UPDATE =====
           sudo apt update -y && sudo apt upgrade -y
@@ -109,18 +146,40 @@ jobs:
           }
 
           # ===== VALIDATE SECRETS =====
-          if [ -z "${{ secrets.DOMAIN }}" ]; then
-            echo "Error: DOMAIN secret is not set!"
+          echo "Validating GitHub secrets..."
+          echo "DOMAIN: $DOMAIN"
+          echo "PM2_PORT: $PM2_PORT"
+          echo "PM2_NAME: $PM2_NAME"
+          echo "EC2_USER: $EC2_USER"
+          echo "EC2_HOST: $EC2_HOST"
+          echo "EMAIL: $EMAIL"
+          
+          if [ -z "$DOMAIN" ] || [ "$DOMAIN" = "***" ]; then
+            echo "Error: DOMAIN secret is not set or not properly configured!"
             exit 1
           fi
-          if [ -z "${{ secrets.PM2_PORT }}" ]; then
-            echo "Error: PM2_PORT secret is not set!"
+          if [ -z "$PM2_PORT" ] || [ "$PM2_PORT" = "***" ]; then
+            echo "Error: PM2_PORT secret is not set or not properly configured!"
             exit 1
           fi
-          if [ -z "${{ secrets.PM2_NAME }}" ]; then
-            echo "Error: PM2_NAME secret is not set!"
+          if [ -z "$PM2_NAME" ] || [ "$PM2_NAME" = "***" ]; then
+            echo "Error: PM2_NAME secret is not set or not properly configured!"
             exit 1
           fi
+          if [ -z "$EC2_USER" ] || [ "$EC2_USER" = "***" ]; then
+            echo "Error: EC2_USER secret is not set or not properly configured!"
+            exit 1
+          fi
+          if [ -z "$EC2_HOST" ] || [ "$EC2_HOST" = "***" ]; then
+            echo "Error: EC2_HOST secret is not set or not properly configured!"
+            exit 1
+          fi
+          if [ -z "$EMAIL" ] || [ "$EMAIL" = "***" ]; then
+            echo "Error: EMAIL secret is not set or not properly configured!"
+            exit 1
+          fi
+          
+          echo "All secrets validated successfully!"
 
           # ===== SERVE WITH PM2 =====
           echo "Current directory: $(pwd)"
@@ -155,13 +214,17 @@ jobs:
           pm2 logs ${{ secrets.PM2_NAME }} --lines 10 --nostream || echo "Could not get PM2 logs"
 
           # ===== NGINX CONFIG =====
+          echo "Setting up nginx configuration..."
+          echo "Domain: $DOMAIN"
+          echo "PM2 Port: $PM2_PORT"
+          
           sudo tee /etc/nginx/sites-available/voiceover > /dev/null <<EOT
           server {
               listen 80;
-              server_name ${{ secrets.DOMAIN }};
+              server_name $DOMAIN;
 
               location / {
-                  proxy_pass http://localhost:${{ secrets.PM2_PORT }};
+                  proxy_pass http://localhost:$PM2_PORT;
                   proxy_http_version 1.1;
                   proxy_set_header Upgrade \$http_upgrade;
                   proxy_set_header Connection "upgrade";
@@ -172,17 +235,45 @@ jobs:
               }
           }
           EOT
+          
+          echo "Generated nginx configuration:"
+          sudo cat /etc/nginx/sites-available/voiceover
 
           sudo ln -sf /etc/nginx/sites-available/voiceover /etc/nginx/sites-enabled/
           
           echo "Testing nginx configuration..."
           sudo nginx -t || {
-            echo "Nginx configuration test failed!"
-            echo "Current nginx configuration:"
+            echo "Nginx configuration test failed! Attempting fallback configuration..."
+            
+            # Create a simple fallback configuration
+            sudo tee /etc/nginx/sites-available/voiceover > /dev/null <<EOT
+server {
+    listen 80;
+    server_name $DOMAIN;
+    
+    location / {
+        proxy_pass http://localhost:$PM2_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOT
+            
+            echo "Fallback nginx configuration created:"
             sudo cat /etc/nginx/sites-available/voiceover
-            echo "Nginx error log:"
-            sudo tail -20 /var/log/nginx/error.log
-            exit 1
+            
+            echo "Testing fallback nginx configuration..."
+            sudo nginx -t || {
+              echo "Fallback nginx configuration also failed!"
+              echo "Nginx error log:"
+              sudo tail -20 /var/log/nginx/error.log
+              exit 1
+            }
           }
           
           echo "Reloading nginx..."
@@ -193,8 +284,8 @@ jobs:
 
           # ===== SSL =====
           echo "Setting up SSL with Let's Encrypt..."
-          sudo certbot --nginx -d ${{ secrets.DOMAIN }} \
-            --non-interactive --agree-tos -m ${{ secrets.EMAIL }} || {
+          sudo certbot --nginx -d $DOMAIN \
+            --non-interactive --agree-tos -m $EMAIL || {
             echo "SSL setup failed, but continuing..."
           }
 
