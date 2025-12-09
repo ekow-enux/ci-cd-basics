@@ -20,21 +20,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install Dependencies
-        run: |
-          cd ci-cd-basics
-          npm ci
+        working-directory: ci-cd-basics
+        run: npm ci
 
       - name: Build Application
-        run: |
-          cd ci-cd-basics
-          npm run build
+        working-directory: ci-cd-basics
+        run: npm run build
 
       - name: Verify Build Output
+        working-directory: ci-cd-basics
         run: |
-          cd ci-cd-basics
           ls -la dist/
           test -f dist/index.html || (echo "Build failed: index.html not found" && exit 1)
 
