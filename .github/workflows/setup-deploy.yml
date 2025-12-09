@@ -34,8 +34,10 @@ jobs:
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
+          # Use strict permissions for the SSH key
           echo "${{ secrets.EC2_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
+          # Security measure: Add host key to known_hosts automatically
           ssh-keyscan ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
       - name: Load GitHub Secrets
@@ -53,66 +55,95 @@ jobs:
           ssh $EC2_USER@$EC2_HOST <<EOF
           set -e
 
+          # Ensure variables from GitHub secrets are available in this scope
           DOMAIN="$DOMAIN"
           PM2_PORT="$PM2_PORT"
           PM2_NAME="$PM2_NAME"
           EMAIL="$EMAIL"
           APP_DIR="$APP_DIR"
+          EC2_USER="$EC2_USER"
 
-          sudo apt update -y
-          sudo apt install -y git nginx curl certbot python3-certbot-nginx
+          sudo apt update -y -q
+          sudo apt install -y git nginx curl certbot python3-certbot-nginx -q
 
-          curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-          sudo apt install -y nodejs
+          curl -fsSL deb.nodesource.com | sudo -E bash -
+          sudo apt install -y nodejs -q
           sudo npm install -g pm2
 
           pm2 startup systemd -u $EC2_USER --hp /home/$EC2_USER || true
 
           if [ ! -d "$APP_DIR" ]; then
-            git clone https://github.com/${{ github.repository }}.git "$APP_DIR"
+            git clone github.com{{ github.repository }}.git "$APP_DIR"
           fi
 
-          cd "$APP_DIR"
+          cd "$APP_DIR/ci-cd-basics"
           git pull origin main
-
-          cd ci-cd-basics
           npm ci
           npm run build
 
           pm2 stop "$PM2_NAME" || true
           pm2 delete "$PM2_NAME" || true
-          pm2 serve dist "$PM2_PORT" --name "$PM2_NAME" --spa
+          # Note: pm2 serve should be started from the root of the app directory
+          cd ../
+          pm2 serve ci-cd-basics/dist "$PM2_PORT" --name "$PM2_NAME" --spa
           pm2 save
 
-          # ✅ BULLETPROOF NGINX CONFIG (NO HEREDOC EXPANSION)
+          # ✅ FIX: Define Nginx map for dynamic Connection header handling (WebSocket fix)
+          if ! grep -q "map \$http_upgrade \$connection_upgrade" /etc/nginx/nginx.conf; then
+            # Using bash -c with sed to insert map into http block
+            sudo bash -c 'sed -i "/^http {/a map \$http_upgrade \$connection_upgrade {\\n    default upgrade;\\n    '' close;\\n}" /etc/nginx/nginx.conf'
+          fi
+
+          # ✅ BULLETPROOF NGINX CONFIG - Double escape Nginx variables
           sudo rm -f /etc/nginx/sites-enabled/voiceover
           sudo rm -f /etc/nginx/sites-available/voiceover
 
-          sudo bash -c "cat > /etc/nginx/sites-available/voiceover" <<NGINX
+          # We double-escape $ (\\$) so Bash writes a literal $ to the Nginx config file
+          sudo bash -c "cat > /etc/nginx/sites-available/voiceover" <<NGINX_INNER
           server {
               listen 80;
               server_name $DOMAIN;
 
-               location / {
+              location / {
                   proxy_pass http://localhost:$PM2_PORT;
                   proxy_http_version 1.1;
-                  proxy_set_header Upgrade \$http_upgrade;
-                  # Use the dynamic variable we defined in the http block
-                  proxy_set_header Connection \$connection_upgrade;
-                  proxy_set_header Host \$host;
-                  proxy_set_header X-Real-IP \$remote_addr;
-                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-                  proxy_set_header X-Forwarded-Proto \$scheme;
+                  proxy_set_header Upgrade \\\$http_upgrade;
+                  proxy_set_header Connection \\\$connection_upgrade; 
+                  proxy_set_header Host \\\$host;
+                  proxy_set_header X-Real-IP \\\$remote_addr;
+                  proxy_set_header X-Forwarded-For \\\$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \\\$scheme;
               }
           }
-          NGINX
+          NGINX_INNER
 
-                    sudo ln -sf /etc/nginx/sites-available/voiceover /etc/nginx/sites-enabled/
+          sudo ln -sf /etc/nginx/sites-available/voiceover /etc/nginx/sites-enabled/
 
-                    sudo nginx -t
-                    sudo systemctl reload nginx
+          # Test Nginx Config and Log Errors to Job Summary if it fails
+          sudo nginx -t 2>&1 | tee nginx_test.log
+          NGINX_TEST_STATUS=\$?
 
-                    sudo certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$EMAIL" || true
+          if [ \$NGINX_TEST_STATUS -ne 0 ]; then
+            echo "### ❌ Nginx Configuration Test Failed" >> \$GITHUB_STEP_SUMMARY
+            echo '```bash' >> \$GITHUB_STEP_SUMMARY
+            cat nginx_test.log >> \$GITHUB_STEP_SUMMARY
+            echo '```' >> \$GITHUB_STEP_SUMMARY
+            # Exit with failure status so the GitHub Action step fails officially
+            exit \$NGINX_TEST_STATUS
+          fi
 
-                    echo "✅ DEPLOYMENT COMPLETE SUCCESSFULLY ✅"
-                    EOF
+          sudo systemctl reload nginx
+
+          sudo certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$EMAIL" || true
+
+          echo "✅ DEPLOYMENT COMPLETE SUCCESSFULLY ✅"
+          EOF
+        env:
+          DOMAIN: ${{ secrets.DOMAIN }}  
+          PM2_PORT: ${{ secrets.PM2_PORT }}
+          PM2_NAME: ${{ secrets.PM2_NAME }}
+          EMAIL: ${{ secrets.EMAIL }}
+          APP_DIR: voiceover-landing
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          
